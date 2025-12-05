@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 보행/균형 분석 리포트</title>
+    <!-- Tailwind CSS CDN 로드 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- jsPDF와 html2canvas CDN (PDF 생성용) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f7f9fb; }
+        .report-content {
+            /* A4 비율의 최소 높이 확보 */
+            min-height: 297mm;
+            padding: 30px;
+        }
+        /* PDF 인쇄/캡처 시 페이지 분할 방지 */
+        .prescription-item {
+            break-inside: avoid;
+        }
+        /* 이미지 비율 유지를 위한 스타일 */
+        .image-placeholder img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain; 
+        }
+        /* 로딩 컨테이너 스타일 */
+        .loading-image-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 250px; 
+            background-color: #f0f4f8;
+            border-radius: 0.5rem;
+            color: #64748b;
+            font-size: 0.875rem;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 0.5rem;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* PDF 인쇄 스타일 */
+        @media print {
+            body { 
+                background-color: white !important; 
+                margin: 0;
+            }
+            .header, .controls, .footer, #pdfDownloadButton, #analyzeButton, #fileStatus, .analysis-options, .reset-btn {
+                display: none !important; 
+            }
+            .report-content {
+                box-shadow: none !important;
+                border: none !important;
+                margin: 0 !important;
+                padding: 10mm !important; 
+                min-height: auto; 
+            }
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+
+    <div class="max-w-4xl mx-auto">
+        
+        <!-- 헤더 및 컨트롤 -->
+        <header class="header bg-white p-6 rounded-xl shadow-lg mb-8 relative">
+            
+            <div class="flex justify-between items-start mb-4">
+                <h1 class="text-3xl font-bold text-gray-800">AI 보행 및 균형 분석 리포트 생성기</h1>
+                <button onclick="resetAll()" class="reset-btn text-sm px-3 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded transition-colors">
+                    전체 초기화
+                </button>
+            </div>
+            
+            <p class="text-gray-600 mb-6">동적 보행 보고서와 정적 균형 보고서 중 하나 또는 둘 다를 업로드하여 종합 분석 리포트를 생성합니다.</p>
+
+            <!-- API Key 입력 섹션 -->
+            <div class="flex flex-col sm:flex-row items-end sm:items-center space-y-3 sm:space-y-0 sm:space-x-4 mb-6">
+                <div class="flex-grow w-full sm:w-auto">
+                    <label for="apiKeyInput" class="block text-sm font-medium text-gray-700">Gemini API Key 입력 (필수)</label>
+                    <!-- autocomplete="new-password" 속성을 추가하여 브라우저 자동완성 방지 -->
+                    <input type="password" id="apiKeyInput" placeholder="YOUR_API_KEY" autocomplete="new-password" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                </div>
+                <button onclick="saveApiKey()" class="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md shadow-sm transition-colors">
+                    API 키 저장
+                </button>
+            </div>
+            
+            <!-- 파일 업로드 입력 섹션 (분리됨) -->
+            <div class="controls flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-6 mb-6">
+                <!-- 동적 보행 보고서 입력 -->
+                <div class="flex-1 w-full">
+                    <label for="gaitReportFile" class="block text-sm font-bold text-gray-700 mb-1">동적 보행 보고서 (Gait)</label>
+                    <input type="file" id="gaitReportFile" accept=".pdf,.txt" class="block w-full text-sm text-gray-500
+                        file:mr-4 file:py-2 file:px-4
+                        file:rounded-lg file:border-0
+                        file:text-sm file:font-semibold
+                        file:bg-indigo-50 file:text-indigo-700
+                        hover:file:bg-indigo-100 cursor-pointer"
+                        onchange="handleFileChange('gait', this)">
+                    <p id="gaitFileInfo" class="text-xs text-gray-500 mt-1 h-4"></p>
+                </div>
+                
+                <!-- 정적 균형 보고서 입력 -->
+                <div class="flex-1 w-full">
+                    <label for="balanceReportFile" class="block text-sm font-bold text-gray-700 mb-1">정적 균형 보고서 (Balance)</label>
+                    <input type="file" id="balanceReportFile" accept=".pdf,.txt" class="block w-full text-sm text-gray-500
+                        file:mr-4 file:py-2 file:px-4
+                        file:rounded-lg file:border-0
+                        file:text-sm file:font-semibold
+                        file:bg-indigo-50 file:text-indigo-700
+                        hover:file:bg-indigo-100 cursor-pointer"
+                        onchange="handleFileChange('balance', this)">
+                    <p id="balanceFileInfo" class="text-xs text-gray-500 mt-1 h-4"></p>
+                </div>
+            </div>
+            
+            <!-- 분석 옵션 추가 -->
+            <div class="analysis-options bg-gray-100 p-4 rounded-lg flex items-center justify-between mb-6">
+                <label for="includeImages" class="flex items-center space-x-3 cursor-pointer">
+                    <input type="checkbox" id="includeImages" checked class="h-5 w-5 text-red-600 border-gray-300 rounded focus:ring-red-500">
+                    <span class="text-sm font-medium text-gray-800">운동 처방 이미지 포함</span>
+                </label>
+                <span class="text-xs text-gray-500">(체크 해제 시 분석 속도가 빨라집니다)</span>
+            </div>
+
+            <!-- 분석 시작 버튼 -->
+            <button id="analyzeButton" class="w-full bg-gray-400 text-white font-bold py-3 px-6 rounded-lg transition-colors shadow-md cursor-not-allowed" disabled>
+                AI 분석 시작
+            </button>
+            <p id="fileStatus" class="mt-4 text-sm text-gray-500 text-center">
+                업로드된 파일 없음.
+            </p>
+        </header>
+
+        <!-- 분석 리포트 영역 -->
+        <div id="reportContainer" class="bg-white p-8 rounded-xl shadow-2xl border border-gray-100 mt-8 hidden">
+            <div id="reportRefDiv" class="report-content max-w-full mx-auto">
+                <!-- AI 생성 리포트 내용이 여기에 표시됩니다. -->
+                <div class="text-center text-gray-500 py-20">보고서 내용을 기다리는 중...</div>
+            </div>
+        </div>
+
+        <!-- PDF 출력 버튼 -->
+        <div class="flex justify-center mt-8 pb-10">
+            <button id="pdfDownloadButton" class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-8 rounded-lg transition-colors shadow-xl hidden" onclick="generatePDF()">
+                PDF 보고서 다운로드
+            </button>
+        </div>
+
+        <!-- 로딩 인디케이터 -->
+        <div id="loadingIndicator" class="mt-8 hidden flex flex-col items-center justify-center p-10 bg-white rounded-xl shadow-lg">
+            <div class="spinner w-12 h-12 mb-3"></div>
+            <p class="text-lg font-medium text-blue-600">AI가 리포트를 분석/생성 중입니다...</p>
+            <p id="loadingMessage" class="text-sm text-gray-500 mt-1">이 과정은 몇 초에서 1분 정도 소요될 수 있습니다.</p>
+        </div>
+
+    </div>
+
+    <script type="module">
+        // 전역 변수 설정
+        const apiKeyInput = document.getElementById('apiKeyInput');
+        const analyzeButton = document.getElementById('analyzeButton');
+        const reportContainer = document.getElementById('reportContainer');
+        const reportRefDiv = document.getElementById('reportRefDiv');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const loadingMessage = document.getElementById('loadingMessage');
+        const fileStatus = document.getElementById('fileStatus');
+        const pdfDownloadButton = document.getElementById('pdfDownloadButton');
+        const includeImagesCheckbox = document.getElementById('includeImages');
+        const gaitFileInfo = document.getElementById('gaitFileInfo');
+        const balanceFileInfo = document.getElementById('balanceFileInfo');
+
+        let userApiKey = '';
+        
+        // 각 슬롯별 파일 내용과 ID를 별도로 관리합니다.
+        let uploadedState = {
+            gait: { content: null, id: null, name: null },
+            balance: { content: null, id: null, name: null }
+        };
+
+        // --------------------------------------------------------------------------------
+        // 1. API Key 관리
+        // --------------------------------------------------------------------------------
+
+        function updateUI() {
+            const hasApiKey = !!userApiKey;
+            const hasFiles = !!uploadedState.gait.content || !!uploadedState.balance.content;
+
+            analyzeButton.disabled = !(hasApiKey && hasFiles);
+            analyzeButton.classList.toggle('bg-gray-400', !hasApiKey || !hasFiles);
+            analyzeButton.classList.toggle('bg-green-600', hasApiKey && hasFiles);
+            analyzeButton.classList.toggle('hover:bg-green-700', hasApiKey && hasFiles);
+            analyzeButton.classList.toggle('cursor-not-allowed', !hasApiKey || !hasFiles);
+            
+            // 상태 텍스트 업데이트
+            let statusText = "업로드된 파일 없음.";
+            if (hasFiles) {
+                const gaitPart = uploadedState.gait.content ? `동적 보행(${uploadedState.gait.id})` : 'X';
+                const balancePart = uploadedState.balance.content ? `정적 균형(${uploadedState.balance.id})` : 'X';
+                statusText = `파일 상태: ${gaitPart}, ${balancePart}`;
+            }
+            fileStatus.textContent = statusText;
+        }
+
+        window.saveApiKey = function() {
+            const key = apiKeyInput.value.trim();
+            if (key) {
+                localStorage.setItem('gemini_api_key', key);
+                userApiKey = key;
+                alertMessage('API 키가 저장되었습니다.', 'success');
+            } else {
+                localStorage.removeItem('gemini_api_key');
+                userApiKey = '';
+                alertMessage('API 키를 입력해주세요.', 'error');
+            }
+            updateUI();
+        }
+
+        window.resetAll = function() {
+            document.getElementById('gaitReportFile').value = '';
+            document.getElementById('balanceReportFile').value = '';
+            uploadedState = {
+                gait: { content: null, id: null, name: null },
+                balance: { content: null, id: null, name: null }
+            };
+            gaitFileInfo.textContent = '';
+            balanceFileInfo.textContent = '';
+            reportContainer.classList.add('hidden');
+            pdfDownloadButton.classList.add('hidden');
+            updateUI();
+            alertMessage('모든 입력이 초기화되었습니다.', 'info');
+        }
+
+        // --------------------------------------------------------------------------------
+        // 2. 파일 처리 로직 (분리된 입력 처리 및 ID 검증)
+        // --------------------------------------------------------------------------------
+
+        function extractPatientId(fileName) {
+            // [Type] 제거, 확장자 제거
+            let temp = fileName.replace(/\[[^\]]+\]\s*/, '').replace(/\.(pdf|txt)$/i, '');
+            // ID 패턴 추출 (NAME_GENDER_ID_DATE...)
+            const match = temp.match(/^(.*?)(?:_[A-Z]{2,3})?_\d{8}.*$/);
+            if (match && match[1]) {
+                return match[1].trim().replace(/_$/, '');
+            }
+            // ID 추출 실패시 예외 처리 (파일명 전체 사용 등)
+            return temp.trim();
+        }
+
+        async function readFileContent(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (event) => resolve(event.target.result);
+                reader.onerror = (error) => reject(error);
+                
+                if (file.name.toLowerCase().endsWith('.pdf')) {
+                    resolve(`[File Name: ${file.name}]\n[Content Placeholder: PDF 파일의 텍스트 내용은 백엔드에서 추출해야 합니다. 파일명을 참고하여 내용을 유추하여 분석을 진행합니다.]`);
+                } else {
+                    reader.readAsText(file);
+                }
+            });
+        }
+
+        window.handleFileChange = async function(type, inputElement) {
+            const fileList = inputElement.files;
+            const otherType = type === 'gait' ? 'balance' : 'gait';
+            const infoElement = type === 'gait' ? gaitFileInfo : balanceFileInfo;
+            
+            pdfDownloadButton.classList.add('hidden');
+            reportContainer.classList.add('hidden');
+            
+            // 1. 파일 삭제 시
+            if (fileList.length === 0) {
+                uploadedState[type] = { content: null, id: null, name: null };
+                infoElement.textContent = '';
+                updateUI();
+                return;
+            }
+            
+            const file = fileList[0];
+            const newId = extractPatientId(file.name);
+            const otherState = uploadedState[otherType];
+
+            // 2. ID 불일치 검사 (다른 슬롯에 파일이 있을 때만)
+            if (otherState.content && otherState.id && otherState.id !== newId) {
+                alertMessage(`오류: 환자 정보 불일치.\n현재: ${newId}\n기존: ${otherState.id}\n동일한 환자의 파일을 업로드하거나 '전체 초기화' 후 진행하세요.`, 'error');
+                inputElement.value = ''; // 입력 취소
+                return; 
+            }
+
+            // 3. 파일 유효성(이름) 검사
+            const requiredKeyword = type === 'gait' ? '동적 보행' : '정적 균형';
+            if (!file.name.includes(requiredKeyword)) {
+                alertMessage(`경고: 이 창에는 '${requiredKeyword}' 보고서만 업로드해야 합니다.`, 'error');
+                inputElement.value = '';
+                return;
+            }
+
+            // 4. 파일 읽기 및 상태 업데이트 (덮어쓰기 허용)
+            try {
+                const content = await readFileContent(file);
+                uploadedState[type] = {
+                    content: `--- ${requiredKeyword} 분석 보고서 (${file.name}) ---\n${content}`,
+                    id: newId,
+                    name: file.name
+                };
+                infoElement.textContent = `환자: ${newId}`;
+                alertMessage(`${file.name} 업로드 완료.`, 'info');
+            } catch (error) {
+                console.error("파일 처리 오류:", error);
+                inputElement.value = '';
+                alertMessage('파일을 읽는 중 오류가 발생했습니다.', 'error');
+            }
+
+            updateUI();
+        }
+
+        // --------------------------------------------------------------------------------
+        // 3. AI 분석 및 리포트 생성
+        // --------------------------------------------------------------------------------
+
+        analyzeButton.onclick = function() {
+            if (analyzeButton.disabled) return;
+            processReport();
+        };
+
+        async function processReport() {
+            if (!userApiKey) {
+                alertMessage('API 키를 먼저 저장해 주세요.', 'error');
+                return;
+            }
+
+            // 업로드된 내용만 결합
+            const combinedReportText = [
+                uploadedState.gait.content,
+                uploadedState.balance.content
+            ].filter(Boolean).join('\n\n');
+
+            if (!combinedReportText) {
+                alertMessage('분석할 파일이 없습니다.', 'error');
+                return;
+            }
+
+            const includeImages = includeImagesCheckbox.checked;
+
+            loadingIndicator.classList.remove('hidden');
+            reportContainer.classList.add('hidden');
+            pdfDownloadButton.classList.add('hidden');
+            
+            loadingMessage.textContent = includeImages 
+                ? 'AI가 리포트 생성 및 이미지 처리를 진행 중입니다. (약 30초~1분)'
+                : 'AI가 리포트를 생성 중입니다. (약 10초)';
+
+            const systemPrompt = `당신은 보행 및 균형 분석 전문가입니다. 사용자가 제공한 보고서 내용을 바탕으로 환자 맞춤형 재활/운동 처방 리포트를 생성합니다.
+
+            ### 분석 원칙
+            1. 입력된 보고서(동적 보행, 정적 균형) 내용만으로 분석합니다.
+            2. 두 보고서가 모두 있으면 종합적으로, 하나만 있으면 해당 기능 위주로 분석합니다.
+            
+            ### 출력 형식 (JSON Only)
+            \`\`\`json
+            {
+              "patientInfo": {
+                "name": "이름", "genderAge": "성별/나이", "date": "측정일",
+                "analysisType": "분석 종류", "summary": "요약(3~4문장)"
+              },
+              "keyFindings": [
+                { "title": "결과1 제목", "detail": "상세 내용" }
+              ],
+              "prescriptions": [
+                {
+                  "title": "운동 제목", "goal": "목표", "description": "방법 설명",
+                  "imagePrompt": "${includeImages ? "영어 이미지 생성 프롬프트" : ""}"
+                }
+              ]
+            }
+            \`\`\`
+            반드시 유효한 JSON 포맷만 출력하세요.
+            `;
+
+            const userQuery = `다음 보고서를 분석해 주세요:\n\n${combinedReportText}`;
+
+            try {
+                const resultJson = await generateReportText(userQuery, systemPrompt);
+                const result = JSON.parse(resultJson);
+                renderReport(result, includeImages);
+            } catch (error) {
+                console.error('분석 오류:', error);
+                alertMessage('AI 분석 실패. API 키 등을 확인하세요.', 'error');
+            } finally {
+                loadingIndicator.classList.add('hidden');
+            }
+        }
+
+        // --------------------------------------------------------------------------------
+        // 4. API 및 유틸리티
+        // --------------------------------------------------------------------------------
+
+        async function generateReportText(userQuery, systemPrompt) {
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${userApiKey}`;
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                generationConfig: { responseMimeType: "application/json" }
+            };
+
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) throw new Error(`API Error ${response.status}`);
+            const data = await response.json();
+            return data.candidates[0].content.parts[0].text;
+        }
+
+        async function generateImage(prompt, container) {
+            if (!userApiKey) return;
+            container.innerHTML = `<div class="loading-image-container"><div class="spinner"></div><p>생성 중...</p></div>`;
+            
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${userApiKey}`;
+            const payload = {
+                instances: [{ prompt: `Medical illustration, clear background: ${prompt}` }],
+                parameters: { "sampleCount": 1 }
+            };
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                const base64 = data.predictions?.[0]?.bytesBase64Encoded;
+                if (base64) {
+                    container.innerHTML = `<img src="data:image/png;base64,${base64}" class="w-full h-full object-contain rounded-lg shadow-md">`;
+                } else {
+                    throw new Error('No image data');
+                }
+            } catch (e) {
+                container.innerHTML = `<p class="text-red-500 text-sm p-4">이미지 생성 실패</p>`;
+            }
+        }
+
+        function alertMessage(msg, type) {
+            console.log(`[${type}] ${msg}`);
+            // 간단한 토스트 메시지 UI (옵션)
+            const toast = document.createElement('div');
+            toast.className = `fixed top-5 right-5 px-4 py-2 rounded shadow text-white ${type==='error'?'bg-red-500':'bg-green-500'} z-50`;
+            toast.textContent = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        // --------------------------------------------------------------------------------
+        // 5. 렌더링 & PDF
+        // --------------------------------------------------------------------------------
+
+        function renderReport(result, includeImages) {
+            reportContainer.classList.remove('hidden');
+            pdfDownloadButton.classList.remove('hidden');
+
+            const p = result.patientInfo || {};
+            const findings = result.keyFindings || [];
+            const scripts = result.prescriptions || [];
+
+            let html = `
+                <header class="text-center mb-10">
+                    <h1 class="text-4xl font-extrabold text-blue-800 mb-2">AI 보행/균형 분석 리포트</h1>
+                    <p class="text-gray-600">환자: ${p.name || '-'} | 날짜: ${p.date || '-'}</p>
+                </header>
+                <div class="bg-gray-50 p-6 rounded-xl shadow-inner mb-8">
+                    <h2 class="text-xl font-bold mb-2">종합 요약</h2>
+                    <p class="text-gray-700 leading-relaxed">${p.summary || ''}</p>
+                </div>
+                <div class="mb-8">
+                    <h2 class="text-2xl font-bold border-b-2 border-indigo-400 pb-2 mb-4">주요 분석 결과</h2>
+                    <div class="space-y-4">
+                        ${findings.map((f, i) => `
+                            <div class="p-4 bg-white border rounded shadow-sm">
+                                <h3 class="font-bold text-indigo-700 mb-1">${i+1}. ${f.title}</h3>
+                                <p class="text-sm text-gray-700">${f.detail}</p>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                <div>
+                    <h2 class="text-2xl font-bold border-b-2 border-red-400 pb-2 mb-4">맞춤형 운동 처방</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        ${scripts.map((s, i) => `
+                            <div class="prescription-item p-5 bg-red-50 border border-red-200 rounded-xl shadow-sm">
+                                <h3 class="font-bold text-red-700 mb-2">${i+1}. ${s.title}</h3>
+                                <div id="img-box-${i}" class="image-placeholder h-48 mb-3 bg-white rounded flex items-center justify-center text-gray-400 text-xs">
+                                    ${includeImages && s.imagePrompt ? "이미지 로딩..." : "이미지 없음"}
+                                </div>
+                                <p class="text-sm text-gray-700 whitespace-pre-wrap">${s.description}</p>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+            reportRefDiv.innerHTML = html;
+
+            if (includeImages) {
+                scripts.forEach((s, i) => {
+                    if (s.imagePrompt) {
+                        const box = document.getElementById(`img-box-${i}`);
+                        generateImage(s.imagePrompt, box);
+                    }
+                });
+            }
+        }
+
+        // PDF 생성 (html2canvas + jsPDF)
+        window.generatePDF = async function() {
+            const btn = document.getElementById('pdfDownloadButton');
+            btn.textContent = '생성 중...';
+            btn.disabled = true;
+
+            try {
+                const canvas = await html2canvas(reportRefDiv, { scale: 2, useCORS: true });
+                const imgData = canvas.toDataURL('image/jpeg', 1.0);
+                const { jsPDF } = window.jspdf;
+                const pdf = new jsPDF('p', 'mm', 'a4');
+                const pdfW = 210;
+                const pdfH = 297;
+                const imgH = (canvas.height * pdfW) / canvas.width;
+                
+                let heightLeft = imgH;
+                let position = 0;
+
+                pdf.addImage(imgData, 'JPEG', 0, position, pdfW, imgH);
+                heightLeft -= pdfH;
+
+                while (heightLeft >= 0) {
+                    position = heightLeft - imgH;
+                    pdf.addPage();
+                    pdf.addImage(imgData, 'JPEG', 0, position, pdfW, imgH);
+                    heightLeft -= pdfH;
+                }
+                
+                const now = new Date().toISOString().slice(0,10).replace(/-/g,'');
+                pdf.save(`Analysis_Report_${now}.pdf`);
+                alertMessage('PDF 다운로드가 시작되었습니다.', 'success');
+            } catch (e) {
+                console.error(e);
+                alertMessage('PDF 생성 실패', 'error');
+            } finally {
+                btn.textContent = 'PDF 보고서 다운로드';
+                btn.disabled = false;
+            }
+        }
+
+        window.onload = () => {
+            const key = localStorage.getItem('gemini_api_key');
+            if (key) {
+                userApiKey = key;
+                apiKeyInput.value = key;
+            }
+            updateUI();
+        }
+    </script>
+</body>
+</html>
